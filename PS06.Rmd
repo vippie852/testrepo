@@ -1,0 +1,185 @@
+---
+title: "STAT/MATH 495: Problem Set 06"
+author: "Vickie Ip"
+date: "2017-10-17"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    collapsed: false
+    smooth_scroll: false
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, fig.width=8, fig.height=4.5, message=FALSE, warning = FALSE
+  )
+
+set.seed(76)
+
+# Load packages
+library(tidyverse)
+library(broom)
+library(knitr)
+library(dplyr)
+```
+
+# Collaboration
+
+Please indicate who you collaborated with on this assignment: Leonard
+
+# Setup
+
+Define truth, which again we know for the purposes of this assignment, but in
+practice we won't:
+
+* the true function f(x) i.e. the signal
+* the true epsilon i.e. the noise, which in this case is Normal$(0, sd=\sigma)$.
+Hence the standard deviation $\sigma$ determines the amount of noise.
+
+```{r}
+f <- function(x) {
+  x^2
+}
+sigma <- 0.3
+```
+
+This is the target point we'll be trying to predict: $(0.95, f(0.95)) = (0.95, 0.95^2) = (0.95, 0.9025)$, Thus, the test set is just `x=0.95`
+
+```{r}
+x0 <- 0.95
+test_set <- data_frame(x=x0)
+```
+
+This function generates a random sample of size $n$; think of this as a "get new
+data" function. Random in terms of both:
+
+* (New) the predictor x (uniform on [0,1])
+* the amount of noise $\epsilon$
+
+```{r}
+generate_sample <- function(f, n, sigma) {
+  sample <- data_frame(
+    x = runif(n = n, min = 0, max = 1),
+    f_x = f(x),
+    epsilon = rnorm(n = n, mean = 0, sd = sigma),
+    y = f_x + epsilon
+  )
+  # Recall: We don't observe f(x) and epsilon, just (x, y)
+  sample <- sample %>% 
+    select(x, y)
+  
+  return(sample)
+}
+
+```
+
+Define
+
+* The number $n$ of observations $(x_i, y_i)$ in each sample. In the handout,
+$n=100$ to keep plots uncrowded. Here we boost to $n=500$
+* Number of samples of size $n$ to consider
+
+```{r}
+n <- 500
+n_sims <- 10000
+```
+
+
+# Computation
+
+First, I will create two data.frames to store my predicted values, y0 and MSEs for each of the 10,000 simulations.
+
+```{r}
+lm_predictions <- data.frame(matrix(0,nrow=n_sims, ncol=3)) 
+colnames(lm_predictions) <- c("fhat", "y0", "MSE")
+
+spl_predictions <- data.frame(matrix(0,nrow=n_sims, ncol=3)) 
+colnames(spl_predictions) <- c("fhat", "y0", "MSE")
+```
+
+Next, I created a for loop, where for each time I generate a new sample of 500 random observations, I will use these observations to train my model. Then, I will use it to teset on the `test_set`, which in this case only contains `x=x0`. I will run this simulation 10,000 times.
+
+```{r}
+#Generating 10,000 epsilons and corresponding y0
+  epsilon = rnorm(n = n_sims, mean = 0, sd = sigma)
+
+for (i in 1:n_sims) {
+  simp = generate_sample(f,n,sigma) #Generate training set
+  lm_mod <- smooth.spline(simp$x, simp$y, df=2)
+  spl_mod <- smooth.spline(simp$x, simp$y, df=99)
+  
+  lm_fit <-predict(lm_mod,test_set)  #fitted values on test set
+  spl_fit <- predict(spl_mod, test_set) 
+  
+  lm_predictions[i, 1] <- lm_fit$y #f(x) hat
+  lm_predictions[i,2] <- f(0.95) + epsilon[i] # y0
+  lm_predictions[i,3] <- mean((lm_predictions[i,2] - lm_predictions[i,1])^2) #MSE
+  
+  spl_predictions[i, 1] <- spl_fit$y #f(x) hat
+  spl_predictions[i,2] <- f(0.95) + epsilon[i] #y0
+  spl_predictions[i,3] <- mean((spl_predictions[i,2] - spl_predictions[i,1])^2) #MSE
+  i = i + 1
+}
+```
+
+## Calculations
+```{r}
+#Bias^2
+lm_bias = (mean(lm_predictions$fhat) - f(.95))^2  
+spl_bias = (mean(spl_predictions$fhat) - f(.95))^2 
+
+#Variance
+lm_var = var(lm_predictions$fhat)
+spl_var = var(spl_predictions$fhat)
+
+#MSE
+lm_mse = mean(lm_predictions$MSE) 
+spl_mse = mean(spl_predictions$MSE) 
+
+#Irreducible Error
+irr <- var(epsilon) 
+
+#Sum of Error
+lm_sum = lm_bias + lm_var + irr
+spl_sum = spl_bias + spl_var + irr
+
+#Check using MSE - Bias^2 + Variance + Irreducible Error = 0
+lm_mse - (lm_bias + lm_var + var(epsilon)) #Very close to 0!
+spl_mse - (spl_bias + spl_var + var(epsilon)) #Very close to 0!
+```
+
+## Summary Table
+```{r echo=FALSE}
+#Summary Table
+summary_table <- matrix(c(lm_mse, lm_bias,lm_var,irr,lm_sum, spl_mse, spl_bias, spl_var,irr, spl_sum),nrow = 2, ncol = 5,byrow = TRUE)
+rownames(summary_table) <- c("Linear Model", "Spline Model")
+colnames(summary_table) <- c("MSE", "Squared Bias", "Variance", "Irreducible", "Sum")
+round((summary_table),4)
+```
+
+# Analysis
+
+**Questions**:
+
+1. Based on the topics covered in Lec 2.7, name one possible "sanity check" for your results. Name another if you can.
+
+2. In **two** sentences or less, give a rough sketch of what the procedure would
+be to get the breakdown of $$\mbox{MSE}\left[\widehat{f}(x)\right]$$ for *all*
+$x$ in this example, and not just for $$\mbox{MSE}\left[\widehat{f}(x_0)\right]
+= \mbox{MSE}\left[\widehat{f}(0.95)\right]$$.
+3. Which of the two models would you choose for predicting the point of interest and why?
+
+**Answers**:
+
+1. One possible sanity check is to observe the trends of the error due to squared bias and error due to variance as the model increases in complexity. Models with high complexity tend to have a low squared bias and a high variance, while models with low complexity would have a higher squared bias and a lower variance.  
+
+Another way to check my results is by looking into the training and test error of the two models. Low complexity models result in poor accuracy and would lead to high error in both training and test data. On the other hand, high complexity models would have a low training set error but a high test set error.
+
+2. The procedure for calculating the MSE for $$\widehat{f}(x)$$ would be very similar to the above procedure, however the `test_set` would not slightly different. The `test_set` would no longer just contain `x=x0` but will contain the entire domain of x. 
+
+3. I believe that since the error generated from both models are very similar and that the error for the more complex model is bound to have a higher test error, I will follow the Occam's Razor principle and choose the simpler model.
+
+
